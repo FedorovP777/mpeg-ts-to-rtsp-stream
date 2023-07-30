@@ -1,4 +1,4 @@
-import binascii
+import asyncio
 import dataclasses
 import datetime
 import fractions
@@ -12,10 +12,7 @@ from enum import Enum
 from functools import singledispatch
 from typing import Tuple, Optional, List, Dict
 from uuid import uuid4
-
 import av
-
-from copy import deepcopy
 
 rtsp_response_codes = {
     100: "Continue",
@@ -63,32 +60,6 @@ rtsp_response_codes = {
     551: "Option not support"
 }
 
-sdp_video = '''v=0
-o=StreamingServer 3433055887 1688321075700875 IN IP4 192.168.0.102
-s=av0_0
-c=IN IP4 0.0.0.0
-t=0 0
-a=range:npt=now-
-m=video 0 RTP/AVP 96
-a=control:trackID=1
-a=rtpmap:96 H264/90000
-a=cliprect:0,0,1280,720
-a=framesize:96 1280-720
-a=x-dimensions:1280,720
-a=framerate:25.01
-a=fmtp:96 packetization-mode=1;profile-level-id=4DE01F;sprop-parameter-sets=Z00AH5Y1QKALdNwEBAQI,aO48gA==
-b=AS:1054
-'''
-sdp_audio = '''
-m=audio 0 RTP/AVP 97
-a=control:trackID=2
-a=rtpmap:97 mpeg4-generic/8000/1
-a=framerate:7.81
-a=fmtp:97 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=158856E500
-i=Transcoded_aac
-b=AS:37
-'''
-
 
 class BaseMethod:
     url: str
@@ -119,9 +90,10 @@ class Config:
     rtsp_protocol_version = '1.0'
     user_agent = 'Streamer 23.02'
     rtp_rtcp_port_ranges = (160, 560)  # must start from even number. Even - rtp, odd - rtcp
+    client_timeout = 1000  # seconds
 
 
-class PRSPPlayStatus(Enum):
+class RTSPPlayStatus(Enum):
     NEW = 1
     PLAY = 2
     PAUSE = 3
@@ -135,16 +107,20 @@ class ClientContext:
     uuid: str = dataclasses.field(default_factory=uuid4)
     ip: str = ''
     port: str = ''
-    status: PRSPPlayStatus = dataclasses.field(default_factory=lambda: PRSPPlayStatus.NEW)
-    sdp: str = sdp_video
+    status: RTSPPlayStatus = dataclasses.field(default_factory=lambda: RTSPPlayStatus.NEW)
+    sdp: str = open('example-mpeg-ts/example_1.sdp').read()
     client_udp_ports: list = dataclasses.field(default_factory=list)
     server_rtp = None
     server_rtcp = None
+    latest_activity: datetime.datetime = dataclasses.field(default_factory=datetime.datetime.now)
+
+    def __del__(self):
+        print(f"Call ClientContext dtor {self}")
 
 
 class ConnectManager:
     free_udp_ports = []
-    clients = {}
+    clients: Dict[str, ClientContext] = {}
 
     def __init__(self, config: Config):
         self.free_udp_ports = [(i, i + 1) for i in range(config.rtp_rtcp_port_ranges[0], config.rtp_rtcp_port_ranges[1], 2)]
@@ -219,10 +195,6 @@ def handle_request(method, rtsp_message: RTSPPacket, context: ClientContext, soc
     pass
 
 
-tcp_dst_port = 0
-remote_addr = ''
-
-
 @handle_request.register
 def _(method: SetupMethod, rtsp_message: RTSPPacket, context: ClientContext, socket: socket.socket):
     str_port = 'client_port='
@@ -234,8 +206,13 @@ def _(method: SetupMethod, rtsp_message: RTSPPacket, context: ClientContext, soc
     rtp_server_port, rtpcp_server_port = connect_manager.get_free_ports()
     server_rtp = socketserver.UDPServer((HOST, rtp_server_port), RTPHandler)
     server_rtcp = socketserver.UDPServer((HOST, rtpcp_server_port), RTPCPHandler)
+
+    server_rtp.context = context
+    server_rtcp.context = context
+
     context.server_rtp = server_rtp
     context.server_rtcp = server_rtcp
+    context.latest_activity = datetime.datetime.now()
     threading.Thread(target=server_rtp.handle_request).start()
     threading.Thread(target=server_rtcp.handle_request).start()
     packet_maker = RTSPResponseCreator()
@@ -246,6 +223,7 @@ def _(method: SetupMethod, rtsp_message: RTSPPacket, context: ClientContext, soc
     packet_maker.set_header(packet, 'Session', context.uuid)
     packet_maker.set_header(packet, 'User-Agent', Config.user_agent)
     packet_maker.set_header(packet, 'Transport', f'{transport};server_port={rtp_server_port}-{rtpcp_server_port}')
+
     socket.sendall(str.encode(packet_maker.compile_packet(packet)))
 
 
@@ -259,7 +237,8 @@ def _(method: PlayMethod, rtsp_message: RTSPPacket, context: ClientContext, sock
     packet_maker.set_header(packet, 'CSeq', CSeq)
     packet_maker.set_header(packet, 'Session', context.uuid)
     packet_maker.set_header(packet, 'User-Agent', Config.user_agent)
-    context.status = PRSPPlayStatus.PLAY
+    context.status = RTSPPlayStatus.PLAY
+    context.latest_activity = datetime.datetime.now()
     socket.sendall(str.encode(packet_maker.compile_packet(packet)))
 
 
@@ -276,7 +255,7 @@ def _(method: DescribeMethod, rtsp_message: RTSPPacket, context: ClientContext, 
     packet_maker.set_header(packet, 'Content-Type', 'application/sdp')
     packet_maker.set_header(packet, 'Content-Length', str(len(context.sdp)))
     packet_maker.set_body_string(packet, context.sdp)
-
+    context.latest_activity = datetime.datetime.now()
     socket.sendall(str.encode(packet_maker.compile_packet(packet)))
 
 
@@ -291,6 +270,8 @@ def _(method: OptionsMethod, rtsp_message: RTSPPacket, context: ClientContext, s
     packet_maker.set_header(packet, 'CSeq', CSeq)
     packet_maker.set_header(packet, 'Options:', 'OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, GET_PARAMETER, TEARDOWN, SET_PARAMETER')
     packet_maker.set_header(packet, 'User-Agent', Config.user_agent)
+    context.latest_activity = datetime.datetime.now()
+
     socket.sendall(str.encode(packet_maker.compile_packet(packet)))
 
 
@@ -305,6 +286,8 @@ def _(method: TearDownMethod, rtsp_message: RTSPPacket, context: ClientContext, 
     packet_maker.set_header(packet, 'CSeq', CSeq)
     packet_maker.set_header(packet, 'Session', context.uuid)
     packet_maker.set_header(packet, 'User-Agent', Config.user_agent)
+    context.latest_activity = datetime.datetime.now()
+    context.status = RTSPPlayStatus.DONE
     socket.sendall(str.encode(packet_maker.compile_packet(packet)))
 
 
@@ -367,7 +350,7 @@ class RTSPPacketParser:
 connect_manager = ConnectManager(config=Config())
 
 
-class TCPHandler(socketserver.BaseRequestHandler):
+class TCPHandler(socketserver.ThreadingMixIn, socketserver.BaseRequestHandler):
     """
     The request handler class for our server.
 
@@ -396,6 +379,7 @@ class TCPHandler(socketserver.BaseRequestHandler):
                 handle_request(rtsp_packet.method, rtsp_packet, context, self.request)
 
             except Exception as e:
+                # context.status = RTSPPlayStatus.DONE
                 raise Exception from e
 
     # return
@@ -403,8 +387,10 @@ class TCPHandler(socketserver.BaseRequestHandler):
 
 class RTPHandler(socketserver.BaseRequestHandler):
     def handle(self):
-        context = ClientContext()
-        with av.open('./000.ts') as container:
+        # for k, v in connect_manager.clients.items():
+        #     if v.client_udp_ports
+        context = self.server.context
+        with av.open(sys.argv[1]) as container:
             time_int = 12345
             stream = container.streams.video[0]
 
@@ -423,6 +409,11 @@ class RTPHandler(socketserver.BaseRequestHandler):
 
 
 class RTPCPHandler(socketserver.BaseRequestHandler):
+
+    def setup(self):
+        # the socket is called request in the request handler
+        self.request[1].settimeout(1.0)
+
     def handle(self):
         body = self.request[1].recv(TCP_BUFF_SIZE)
         print("RTPCPHandler!!!!!!!!!!!!!!!!!!!!!!!", body)
@@ -430,11 +421,20 @@ class RTPCPHandler(socketserver.BaseRequestHandler):
         report = make_rtcp_sender_report()
         print("send report", report)
         print(self.request[1])
-        self.request[1].sendall(report)
+        self.request[1].sendto(
+            report,
+            self.client_address)
         while True:
-            body = self.request[1].recv(TCP_BUFF_SIZE)
-            print("RTPCPHandler!!!!!!!!!!!!!!!!!!!!!!!", body)
-            time.sleep(5)
+            try:
+                data = self.request[1].recv(TCP_BUFF_SIZE)
+                print("receive report", data)
+
+                if not data:
+                    break  # connection is closed
+                else:
+                    pass  # do your thing
+            except socket.timeout:
+                pass  # handle timeout
 
 
 def size_byte_struct(iter: List[Tuple[int, int]]) -> int:
@@ -632,6 +632,31 @@ header = RTPPacketHeader(version=2,
                          timestamp=context.timestamp,
                          SSRC=1)
 
+
+async def RTSPClientCheker():
+    while True:
+        await asyncio.sleep(10)
+        delete_keys = set()
+
+        for key, client_context in connect_manager.clients.items():
+            print(client_context, (datetime.datetime.now() - client_context.latest_activity).total_seconds())
+            if (datetime.datetime.now() - client_context.latest_activity).total_seconds() > Config.client_timeout:
+                delete_keys.add(key)
+
+            if client_context.status == RTSPPlayStatus.DONE:
+                delete_keys.add(key)
+        print(delete_keys)
+        for key in delete_keys:
+            if key in connect_manager.clients:
+                if connect_manager.clients[key].server_rtp:
+                    connect_manager.clients[key].server_rtp.shutdown()
+                    connect_manager.clients[key].server_rtp.close()
+                if connect_manager.clients[key].server_rtcp:
+                    connect_manager.clients[key].server_rtcp.shutdown()
+                    connect_manager.clients[key].server_rtcp.close()
+                del connect_manager.clients[key]
+
+
 if __name__ == "__main__":
     HOST, PORT = "0.0.0.0", 554
 
@@ -643,4 +668,7 @@ if __name__ == "__main__":
         #     with socketserver.UDPServer((HOST, 161), RTPCPHandler) as server_rtcp:
         #         threading.Thread(target=server_rtp.handle_request).start()
         #         threading.Thread(target=server_rtcp.handle_request).start()
-        server.serve_forever()
+        threading.Thread(target=server.serve_forever).start()
+        # server.serve_forever()
+
+        asyncio.run(RTSPClientCheker())
