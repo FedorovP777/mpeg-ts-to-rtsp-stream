@@ -1,7 +1,38 @@
+import dataclasses
+import datetime
+import enum
+from enum import Enum
 from typing import Dict, Tuple
+from uuid import uuid4
 
 from src.config import Config
-from src.models import ClientContext
+from src.sdp import SDPSession
+
+
+@enum.unique
+class PlayStatus(Enum):
+    NEW = 1
+    PLAY = 2
+    PAUSE = 3
+    DONE = 4
+
+
+@dataclasses.dataclass
+class ClientContext:
+    sequence_number: int = 0
+    timestamp: int = 0
+    uuid: str = dataclasses.field(default_factory=uuid4)
+    ip: str = ''
+    port: str = ''
+    play_status: PlayStatus = PlayStatus.NEW
+    sdp_session: SDPSession = dataclasses.field(default_factory=SDPSession)
+    client_udp_ports: list = dataclasses.field(default_factory=list)
+    server_rtp = None
+    server_rtcp = None
+    latest_activity: datetime.datetime = dataclasses.field(default_factory=datetime.datetime.now)
+
+    def __del__(self):
+        print(f"Call ClientContext dtor {self}")
 
 
 class ConnectManager:

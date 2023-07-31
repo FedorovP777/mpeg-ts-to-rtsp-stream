@@ -9,9 +9,9 @@ from typing import Optional, List, Dict
 import av
 
 from src.config import Config
-from src.models import ClientContext, RTPControlProtocolPacketHeader, RTPControlProtocolSendReport, RTPPacketHeader, ResultParseMethod, \
-    PlayMethod, DescribeMethod, GetParameterMethod, OptionsMethod, SetupMethod, TearDownMethod, RTSPPacket
-from src.rtsp import handle_request
+from src.connect_manager import ClientContext
+from src.rtsp import handle_request, RTSPPacket, TearDownMethod, SetupMethod, OptionsMethod, GetParameterMethod, PlayMethod, DescribeMethod, \
+    ResultParseMethod, RTPPacketHeader, RTPControlProtocolPacketHeader, RTPControlProtocolSendReport
 from src.sdp import SDPSession
 from src.utils import utc_time_to_ntp
 
@@ -116,7 +116,6 @@ class TCPHandler(socketserver.ThreadingMixIn, socketserver.BaseRequestHandler):
 
     def handle(self):
         ip, port = self.request.getpeername()
-        context = ClientContext(ip=ip, port=port)
         sdp_session = SDPSession(sdp_version=0,
                                  id='0',
                                  version='0',
@@ -129,8 +128,8 @@ class TCPHandler(socketserver.ThreadingMixIn, socketserver.BaseRequestHandler):
                                  dst_addr='0.0.0.0',
                                  dst_type='IP4',
                                  name='No Name')
-        context.sdp = sdp_session
-        self.server.connect_manager.add_client(ip, port, ClientContext(ip=ip, port=port))
+        context = ClientContext(ip=ip, port=port, sdp_session=sdp_session)
+        self.server.connect_manager.add_client(ip, port, context)
         config: Config = self.server.config
         print(self.request)
         while True:
@@ -148,7 +147,6 @@ class TCPHandler(socketserver.ThreadingMixIn, socketserver.BaseRequestHandler):
                 handle_request(rtsp_packet.method, rtsp_packet, context, self.request, self.server.connect_manager)
 
             except Exception as e:
-                # context.status = RTSPPlayStatus.DONE
                 raise Exception from e
 
     # return
