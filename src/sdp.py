@@ -84,4 +84,4 @@ def sdp_create(sdp_session, streams):
             attribute_rtpmap_h264(96 + stream.index),
             attribute_fmtp_h264(96 + stream.index)
         ]
-    return "\r\n".join(sdp)
+    return "\r\n".join(sdp) + "\r\n"

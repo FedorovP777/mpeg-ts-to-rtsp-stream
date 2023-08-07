@@ -157,22 +157,25 @@ class RTPHandler(socketserver.BaseRequestHandler):
         # for k, v in connect_manager.clients.items():
         #     if v.client_udp_ports
         context = self.server.context
-        with av.open(sys.argv[1]) as container:
-            time_int = 12345
-            stream = container.streams.video[0]
+        while True:
+            time_int = Config.init_pts
 
-            for packet in container.demux(stream):
-                time_int = time_int + 4000
-                context.timestamp = time_int
-                packet.time_base = fractions.Fraction(numerator=1, denominator=90000)
-                packet.pts = time_int
-                packet.dts = time_int
+            with av.open(sys.argv[1]) as container:
+                container.seek(0)
+                stream = container.streams.video[0]
 
-                packet = make_rtp_packet(context, packet.to_bytes())
-                self.request[1].sendto(
-                    packet,
-                    self.client_address)
-                time.sleep(0.04)
+                for packet in container.demux(stream):
+                    time_int = time_int + 4000
+                    context.timestamp = time_int
+                    packet.time_base = fractions.Fraction(numerator=1, denominator=90000)
+                    packet.pts = time_int
+                    packet.dts = time_int
+
+                    packet = make_rtp_packet(context, packet.to_bytes())
+                    self.request[1].sendto(
+                        packet,
+                        self.client_address)
+                    time.sleep(0.04)
 
 
 class RTPCPHandler(socketserver.BaseRequestHandler):
@@ -182,10 +185,6 @@ class RTPCPHandler(socketserver.BaseRequestHandler):
         self.request[1].settimeout(1.0)
 
     def handle(self):
-        config: Config = self.server.config
-        body = self.request[1].recv(config.tcp_buff_size)
-        print("RTPCPHandler!!!!!!!!!!!!!!!!!!!!!!!", body)
-
         report = make_rtcp_sender_report()
         print("send report", report)
         print(self.request[1])
@@ -194,7 +193,7 @@ class RTPCPHandler(socketserver.BaseRequestHandler):
             self.client_address)
         while True:
             try:
-                data = self.request[1].recv(config.tcp_buff_size)
+                data = self.request[1].recv(Config.tcp_buff_size)
                 print("receive report", data)
 
                 if not data:

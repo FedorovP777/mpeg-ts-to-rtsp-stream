@@ -7,10 +7,8 @@ import threading
 from src.config import Config
 from src.connect_manager import ConnectManager, PlayStatus
 
-connect_manager = ConnectManager(config=Config())
 
-
-async def RTSPClientCheker():
+async def RTSPClientCheker(connect_manager: ConnectManager):
     while True:
         await asyncio.sleep(10)
         delete_keys = set()
@@ -34,14 +32,3 @@ async def RTSPClientCheker():
                 connect_manager.clients[key].server_rtcp.shutdown()
                 connect_manager.clients[key].server_rtcp.close()
             del connect_manager.clients[key]
-
-
-if __name__ == "__main__":
-    HOST, PORT = "0.0.0.0", 554
-    from src.socket_handlers import TCPHandler
-
-    with socketserver.TCPServer((HOST, PORT), TCPHandler) as server:
-        server.connect_manager = connect_manager
-        server.config = Config
-        threading.Thread(target=server.serve_forever).start()
-        asyncio.run(RTSPClientCheker())

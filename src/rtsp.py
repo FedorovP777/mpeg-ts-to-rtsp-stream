@@ -266,16 +266,16 @@ def _(method: SetupMethod, rtsp_message: RTSPPacket, context: ClientContext, soc
     context.latest_activity = datetime.datetime.now()
     threading.Thread(target=server_rtp.handle_request).start()
     threading.Thread(target=server_rtcp.handle_request).start()
-    packet_maker = RTSPResponseCreator()
+    RTSP_response_creator = RTSPResponseCreator()
     packet = RTSPPacket()
-    packet_maker.set_version(packet, Config.rtsp_protocol_version)
-    packet_maker.set_status(packet, 200)
-    packet_maker.set_header(packet, 'CSeq', rtsp_message.headers['CSeq'])
-    packet_maker.set_header(packet, 'Session', context.uuid)
-    packet_maker.set_header(packet, 'User-Agent', Config.user_agent)
-    packet_maker.set_header(packet, 'Transport', f'{transport};server_port={rtp_server_port}-{rtpcp_server_port}')
+    RTSP_response_creator.set_version(packet, Config.rtsp_protocol_version)
+    RTSP_response_creator.set_status(packet, 200)
+    RTSP_response_creator.set_header(packet, 'CSeq', rtsp_message.headers['CSeq'])
+    RTSP_response_creator.set_header(packet, 'Session', context.uuid)
+    RTSP_response_creator.set_header(packet, 'User-Agent', Config.user_agent)
+    RTSP_response_creator.set_header(packet, 'Transport', f'{transport};server_port={rtp_server_port}-{rtpcp_server_port}')
 
-    socket.sendall(str.encode(packet_maker.compile_packet(packet)))
+    socket.sendall(str.encode(RTSP_response_creator.compile_packet(packet)))
 
 
 @handle_request.register
