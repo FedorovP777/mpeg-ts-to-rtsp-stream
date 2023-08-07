@@ -7,3 +7,4 @@ class Config:
     client_timeout = 1000  # seconds
     tcp_buff_size = 20048
     init_pts = 12345
+    interval_client_state_seconds = 10

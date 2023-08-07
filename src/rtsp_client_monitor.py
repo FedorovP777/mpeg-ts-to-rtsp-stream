@@ -6,25 +6,26 @@ from src.connect_manager import ConnectManager, PlayStatus
 
 
 # noinspection PyPep8Naming
-async def RTSPClientMonitor(connect_manager: ConnectManager):
+async def RTSPClientMonitor(connect_manager: ConnectManager) -> None:
     while True:
-        await asyncio.sleep(10)
+        await asyncio.sleep(Config.interval_client_state_seconds)
         delete_keys = set()
 
         for key, client_context in connect_manager.clients.items():
-            if (datetime.datetime.now() - client_context.latest_activity).total_seconds() > Config.client_timeout:
+            if (datetime.datetime.now() - client_context.latest_activity).total_seconds() >= Config.client_timeout:
+                client_context.play_status = PlayStatus.DONE
+
+            if client_context.play_status == PlayStatus.DONE:
                 delete_keys.add(key)
 
-            if client_context.play_status == PlayStatus.DONE.value:
-                delete_keys.add(key)
         for key in delete_keys:
             if key not in connect_manager.clients:
                 continue
 
             if connect_manager.clients[key].server_rtp:
-                connect_manager.clients[key].server_rtp.shutdown()
-                connect_manager.clients[key].server_rtp.close()
+                connect_manager.rtp_disconnect(key)
+
             if connect_manager.clients[key].server_rtcp:
-                connect_manager.clients[key].server_rtcp.shutdown()
-                connect_manager.clients[key].server_rtcp.close()
-            del connect_manager.clients[key]
+                connect_manager.rtpcp_disconnect(key)
+
+            connect_manager.remove_client(key)

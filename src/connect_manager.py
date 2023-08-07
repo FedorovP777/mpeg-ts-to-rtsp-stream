@@ -50,3 +50,14 @@ class ConnectManager:
 
     def add_client(self, ip: str, port: str, context: ClientContext):
         self.clients[f'{ip}:{port}'] = context
+
+    def rtp_disconnect(self, client_id: str):
+        self.clients[client_id].server_rtp.shutdown()
+        self.clients[client_id].server_rtp.close()
+
+    def rtpcp_disconnect(self, client_id: str):
+        self.clients[client_id].server_rtcp.shutdown()
+        self.clients[client_id].server_rtcp.close()
+
+    def remove_client(self, client_id: str) -> None:
+        del self.clients[client_id]
