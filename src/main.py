@@ -1,21 +1,18 @@
 import asyncio
-import datetime
 import socketserver
-import sys
 import threading
 
-from src.rtsp_client_cheker import RTSPClientCheker
 from src.config import Config
-from src.connect_manager import ConnectManager, PlayStatus
+from src.connect_manager import ConnectManager
+from src.rtsp_client_monitor import RTSPClientMonitor
+from src.socket_handlers import TCPHandler
 
 if __name__ == "__main__":
-    connect_manager = ConnectManager(config=Config())
+    config = Config()
+    connect_manager = ConnectManager(config=config)
 
-    HOST, PORT = "0.0.0.0", 554
-    from src.socket_handlers import TCPHandler
-
-    with socketserver.TCPServer((HOST, PORT), TCPHandler) as server:
+    with socketserver.TCPServer((config.host, config.rtsp_port), TCPHandler) as server:
         server.connect_manager = connect_manager
-        server.config = Config
+        server.config = config
         threading.Thread(target=server.serve_forever).start()
-        asyncio.run(RTSPClientCheker(connect_manager))
+        asyncio.run(RTSPClientMonitor(connect_manager))
